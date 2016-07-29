@@ -197,7 +197,7 @@ while True:
         x = parseChannelByIdOrUser(q, linkQ, visited)
         print("Remaining in Q", linkQ.qsize())
         MLAB_API_KEY = "ucQuRaICqjzsxmtTVyuXp3dxzNheiKmy";
-        MLAB_TEMP_COLLECTION = "profilesv2"
+        MLAB_TEMP_COLLECTION = "profilesv3"
         mongoUri = "https://api.mlab.com/api/1/databases/alphastoka/collections/" + MLAB_TEMP_COLLECTION + "/?apiKey=" + MLAB_API_KEY
         r=  requests.post(mongoUri, headers={
             "Content-Type" : "application/json"

@@ -4,7 +4,8 @@ import pika
 import queue
 import json
 from langid.langid import LanguageIdentifier, model
-from multiprocessing import Pool
+# from multiprocessing import Pool
+import random
 
 #
 # Brain for figuring out stuff
@@ -12,8 +13,9 @@ from multiprocessing import Pool
 class RedBrain:
     # Constructor
     # soup - BeautifulSoup object
-    def __init__(self, soup):
+    def __init__(self, soup, soupMain):
         self.soup = soup
+        self.soupMain = soupMain
         self.lidentifier = LanguageIdentifier.from_modelstring(model, norm_probs=True)
 
     # get description text
@@ -58,10 +60,53 @@ class RedBrain:
             print("unknown follower and view")
             return ""
 
+    @staticmethod
+    def getWatchLinks(stx):
+        rgx_reflink = r"(/watch\?v=[A-Za-z0-9]+)"
+        matches = re.findall(rgx_reflink, stx)
+        if not matches:
+            return []
+        return matches
+
+    def getChannelFromVideoRef(self):
+        stx = str(self.soupMain)
+        matches = RedBrain.getWatchLinks(stx)
+        randomVideoLink = random.choice(matches)
+
+        #go to video of one of parent's ch
+        r_video = requests.get('https://www.youtube.com/' + randomVideoLink, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+        }, cookies={
+            'PREF': 'f1=50000000&f5=30&hl=th-TH'
+        })
+        chanlist = []
+        #get referecne from rhs of parent's ch video
+        otherWatchLinks = RedBrain.getWatchLinks(r_video.text)
+        #go to each video we are suggested to watch
+        for videoLink in otherWatchLinks:
+            # print(videoLink)
+            #naviate there
+            rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+            })
+
+            rvideo_newchan_soup = BeautifulSoup(rvideo_newchan.text, 'html.parser')
+            # #grab the fucking channel
+            chanAnchorElem = rvideo_newchan_soup.select(".yt-user-info a")
+            if len(chanAnchorElem) > 0:
+                hrefs = chanAnchorElem[0]['href'].split("/")
+                channelOwner = hrefs[len(hrefs) - 1]
+                # # add te rchan w/ highest priority
+                chanlist.append(channelOwner)
+
+        return chanlist
+
+
     # get all neighboring nodes reachable from
     # this channel
-    def getAllChannelRef(self):
-        stx = str(self.soup)
+    def getAllChannelRef(self, soup):
+        kNNChan = self.getChannelFromVideoRef()
+        stx = str(soup)
         rgx_reflink = r"\"(/user/[^\"]*)\""
         m1 = re.findall(rgx_reflink, stx)
         rgx_reflink = r"\"(/channel/[^\"]*)\""
@@ -78,7 +123,7 @@ class RedBrain:
         for m in mx:
             k = m.split("/")
             M.append(k[2])
-        return M
+        return M+kNNChan
 
     # get email if avialable
     def getEmail(self):
@@ -108,20 +153,27 @@ def parseChannelByIdOrUser(idOrUser, linkQ, visited):
     if(r.status_code != 200):
         baseUri = "https://www.youtube.com/channel/"
     visited[idOrUser] = True
-    return parseChannelByUrl(baseUri + idOrUser + "/about", linkQ, visited)
+    return parseChannelByUrl(baseUri + idOrUser, linkQ, visited)
 
 def parseChannelByUrl(url, linkQ, visited):
     print("Walking to", url)
     data = {}
 
-    r = requests.get(url, headers={
+    r_about = requests.get(url + "/about", headers={
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
     }, cookies={
         'PREF': 'f1=50000000&f5=30&hl=en-US'
     })
-    raw = r.text
-    soup = BeautifulSoup(raw, 'html.parser')
-    brain = RedBrain(soup)
+
+    r_main = requests.get(url, headers={
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+    }, cookies={
+        'PREF': 'f1=50000000&f5=30&hl=en-US'
+    })
+
+    aboutPage = BeautifulSoup(r_about.text, 'html.parser')
+    mainPage = BeautifulSoup(r_main.text, 'html.parser')
+    brain = RedBrain(aboutPage, mainPage)
     #parse
     data['medium'] = 'youtube';
     data['title'] = brain.getTitle()
@@ -137,24 +189,14 @@ def parseChannelByUrl(url, linkQ, visited):
     data['language'] = brain.getLanguage()
     data['url'] = url;
 
-    dnode = brain.getAllChannelRef()
+    dnode = brain.getAllChannelRef(aboutPage)
     dblq = {}
     for xk in dnode:
         if xk in visited or xk in dblq:
             continue
-        #calculate priority based on thainess
-        prio = 0
-        if data['country'] == "Thailand":
-            prio = 99
-        elif data['language'][0] == "th":
-            prio = 98
-        elif "Thailand" in data['description']:
-            prio = 97
-
-
-        print("Inserting", xk, "int RRMQ with priority", prio)
+        print("Inserting", xk)
         dblq[xk] = xk
-        linkQ.put(xk, prio)
+        linkQ.put(xk, 50)
 
     return data
 
@@ -175,19 +217,19 @@ visited = {}
 linkQ  = Racist()
 
 # starting points with racism score
-# linkQ.put("UCO5rwjHY-jcX-gmzOCSApOQ", 100)
-linkQ.put("HEARTROCKERChannel", 99)
-# linkQ.put("FoodTravelTVChannel", 100)
-# linkQ.put("UCQ0-okjX18v85QlCAr1GBwQ", 100)
-# linkQ.put("easycooking", 100)
-# linkQ.put("VrzoChannel", 100)
-# linkQ.put("GGTKcastation", 0)
+linkQ.put("UCO5rwjHY-jcX-gmzOCSApOQ", 100)
+linkQ.put("HEARTROCKERChannel", 100)
+linkQ.put("FoodTravelTVChannel", 100)
+linkQ.put("UCQ0-okjX18v85QlCAr1GBwQ", 100)
+linkQ.put("easycooking", 100)
+linkQ.put("VrzoChannel", 100)
+linkQ.put("GGTKcastation", 100)
 linkQ.put("bomberball", 100)
-# linkQ.put("UC7rtE7hSTaC8xDf5v_7O1qQ", 100)
-# linkQ.put("UC0TnoMtL2J9OsXU4jgvO_ag", 0)
-# linkQ.put("UClshsyv7mLwBxLLfSSwLAFQ", 0)
-# linkQ.put("llookatgreeeen", 100)
-# linkQ.put("faharisara", 100)
+linkQ.put("UC7rtE7hSTaC8xDf5v_7O1qQ", 100)
+linkQ.put("UC0TnoMtL2J9OsXU4jgvO_ag", 100)
+linkQ.put("UClshsyv7mLwBxLLfSSwLAFQ", 100)
+linkQ.put("llookatgreeeen", 100)
+linkQ.put("faharisara", 100)
 linkQ.put("ninabeautyworld", 100)
 
 # result = []

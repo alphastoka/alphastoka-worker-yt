@@ -5,6 +5,8 @@ import sys, os
 import pika, re
 from pymongo import MongoClient
 from redbrain import Parser as YtParser
+from categorizer import categorize
+
 requests.packages.urllib3.disable_warnings()
 
 # visited = {}
@@ -51,10 +53,19 @@ class StokaInstance:
         self.rabbit_channel.queue_declare(queue=self.queue_name,durable=True)
         self.mongo_client = MongoClient("mongodb://54.169.89.105:27017")
         self.mongo_db = self.mongo_client['stoka_' + self.group_name]
+        self.mongo_system = self.mongo_client['stoka_system']
+
+        for doc in self.mongo_system.categorizer.find({}).skip(0).limit(1):
+            del doc["_id"]
+            self.categorizer_kwd = doc
+            break
+
         #seed the queue
         # seed_user_obj = self.get_user(yt_user)
         self.seed_user = yt_user
         # print(seed_user_obj)
+        self.astoka_progress = 0
+        self.astoka_error = 0
         self.pushQ(yt_user)
 
         
@@ -68,9 +79,14 @@ class StokaInstance:
     def process(self, id):
         try:
             self.save(self.get_user(id))
+            self.astoka_progress = self.astoka_progress + 1
         except Exception as ex:
             print(ex)
+            self.astoka_error = self.astoka_error + 1
             print("[o] skipped", id)
+
+        print("@astoka.progress ", self.astoka_progress)
+        print("@astoka.error ", self.astoka_error)
 
     # persist to mongodb
     def save(self, object):
@@ -79,11 +95,18 @@ class StokaInstance:
         self.STORAGE[object["id"]] = True
         object["_seed_username"] = self.seed_user
         object["_dna"] = "stoka-yt"
+        object["predicted_age"] = "pending"
+        object["category"] = "pending"
+
+        confidence = categorize(str(object["description"]), self.categorizer_kwd)
+        object["category"] = confidence
+
         try:
-            result = self.mongo_db.human.insert_one(object)
+            result = self.mongo_db.youtube.insert_one(object)
             print("[x] Persisting %s (%s) / mongoId -> %s" % (object["id"], object["title"], result.inserted_id))
         except Exception as ex:
             print(ex)
+            self.astoka_error = self.astoka_error + 1
             print("[o] Exception while saving to mongo (might be duplicate)")
 
     
@@ -155,11 +178,10 @@ if __name__ == '__main__':
     RABBIT_PORT = os.getenv('RABBIT_PORT', 32774)
     RABBIT_HOST = os.getenv('RABBIT_HOST', 'localhost')
     SEED_ID = os.getenv('SEED_ID', 'lifestylehattaya70')
-    GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_y2')
+    GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_y3')
 
     print("using configuration", RABBIT_HOST, RABBIT_PWD, RABBIT_USR, int(RABBIT_PORT))
 
-    # credentials = pika.PlainCredentials('rabbitmq', 'xEDUqAxIZY7nhe40')
     credentials = pika.PlainCredentials(RABBIT_USR, RABBIT_PWD)
     print("Connecting to Rabbit..")
     connection = pika.BlockingConnection(pika.ConnectionParameters(
@@ -168,5 +190,5 @@ if __name__ == '__main__':
     print("Starting Stoka (YouTube)..")
         
     instance = StokaInstance(connection,yt_user=SEED_ID, group_name=GROUP_NAME)
-
+    
     instance.run()

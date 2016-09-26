@@ -78,6 +78,9 @@ class RedBrain:
         start = time.time()
         stx = str(self.soupMain)
         matches = RedBrain.getWatchLinks(stx)
+        if len(matches) == 0:
+            return []
+        
         randomVideoLink = random.choice(matches)
 
         #go to video of one of parent's ch
@@ -93,7 +96,11 @@ class RedBrain:
 
         print("[TIME] getChannelFromVideoRef: ",time.time() - start)
         start = time.time()
-        for videoLink in otherWatchLinks[:3]:
+        MAX_GET = 1
+        if len(otherWatchLinks) > 2:
+            MAX_GET = 3
+            
+        for videoLink in otherWatchLinks[:MAX_GET]:
             # print(videoLink)
             #naviate there
             rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={

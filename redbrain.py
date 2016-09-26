@@ -1,11 +1,11 @@
 import requests, re
 from bs4 import BeautifulSoup
 import pika
-import queue
 import json
 from langid.langid import LanguageIdentifier, model
 # from multiprocessing import Pool
 import random
+import time
 
 #
 # Brain for figuring out stuff
@@ -20,11 +20,17 @@ class RedBrain:
 
     # get description text
     def getDescription(self):
-        return str(self.soup.select(".about-description")[0].text)
-
+        try:
+            return str(self.soup.select(".about-description")[0].text)
+        except Exception:
+            return ""
+            
     # get channel title
     def getTitle(self):
-        return str(self.soup.select(".qualified-channel-title-text a")[0].text)
+        try:
+            return str(self.soup.select(".qualified-channel-title-text a")[0].text)
+        except Exception:
+            return ""
 
     # try to decide main language of the channel
     # return tuple - (iso-alpha-2 locale code str, confidence rating between 0 to 1 float)
@@ -37,7 +43,7 @@ class RedBrain:
         try:
             return str(self.soup.select(".country-inline")[0].text.strip())
         except Exception:
-            print("unknown country")
+            print("country not specified")
             return "Unknown"
 
     # get url of channel logo
@@ -69,6 +75,7 @@ class RedBrain:
         return matches
 
     def getChannelFromVideoRef(self):
+        start = time.time()
         stx = str(self.soupMain)
         matches = RedBrain.getWatchLinks(stx)
         randomVideoLink = random.choice(matches)
@@ -83,7 +90,10 @@ class RedBrain:
         #get referecne from rhs of parent's ch video
         otherWatchLinks = RedBrain.getWatchLinks(r_video.text)
         #go to each video we are suggested to watch
-        for videoLink in otherWatchLinks:
+
+        print("[TIME] getChannelFromVideoRef: ",time.time() - start)
+        start = time.time()
+        for videoLink in otherWatchLinks[:3]:
             # print(videoLink)
             #naviate there
             rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={
@@ -98,7 +108,8 @@ class RedBrain:
                 channelOwner = hrefs[len(hrefs) - 1]
                 # # add te rchan w/ highest priority
                 chanlist.append(channelOwner)
-
+        
+        print("[TIME] getChannelFromVideoRef (otherWatchLinks): ",time.time() - start)
         return chanlist
 
 
@@ -144,107 +155,87 @@ class RedBrain:
             return []
         return m.group(0)
 
-def parseChannelByIdOrUser(idOrUser, linkQ, visited):
-    if idOrUser in visited:
-        raise Exception("Seen this before: " +  idOrUser)
-    baseUri = "https://www.youtube.com/user/"
-    #determine base url /user or /channel
-    r = requests.get(baseUri + idOrUser)
-    if(r.status_code != 200):
-        baseUri = "https://www.youtube.com/channel/"
-    visited[idOrUser] = True
-    return parseChannelByUrl(baseUri + idOrUser, linkQ, visited)
-
-def parseChannelByUrl(url, linkQ, visited):
-    print("Walking to", url)
-    data = {}
-
-    r_about = requests.get(url + "/about", headers={
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
-    }, cookies={
-        'PREF': 'f1=50000000&f5=30&hl=en-US'
-    })
-
-    r_main = requests.get(url, headers={
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
-    }, cookies={
-        'PREF': 'f1=50000000&f5=30&hl=en-US'
-    })
-
-    aboutPage = BeautifulSoup(r_about.text, 'html.parser')
-    mainPage = BeautifulSoup(r_main.text, 'html.parser')
-    brain = RedBrain(aboutPage, mainPage)
-    #parse
-    data['medium'] = 'youtube';
-    data['title'] = brain.getTitle()
-    data['email'] = brain.getEmail()
-    data['phone'] = brain.getPhoneNumber()
-    data['description'] = brain.getDescription();
-    data['logo_url'] = brain.getLogoUrl()
-    fvc = brain.getFollowerAndViewCount()
-    data['stats'] = {}
-    data['stats']['subscriber_count'] = int(fvc[0][0].replace(",", ""))
-    data['stats']['view_count'] = int(fvc[1][0].replace(",", ""))
-    data['country'] = brain.getCountry()
-    data['language'] = brain.getLanguage()
-    data['url'] = url;
-
-    dnode = brain.getAllChannelRef(aboutPage)
-    dblq = {}
-    for xk in dnode:
-        if xk in visited or xk in dblq:
-            continue
-        print("Inserting", xk)
-        dblq[xk] = xk
-        linkQ.put(xk, 50)
-
-    return data
-
-class Racist(queue.PriorityQueue):
+#
+# Parse Stuff
+#
+class Parser:
     def __init__(self):
-        queue.PriorityQueue.__init__(self)
-        self.counter = 0
+        pass
 
-    def put(self, item, priority):
-        queue.PriorityQueue.put(self, (priority, self.counter, item))
-        self.counter += 1
+    def parseChannelByIdOrUser(self, idOrUser):
+        baseUri = "https://www.youtube.com/user/"
+        #determine base url /user or /channel
+        r = requests.get(baseUri + idOrUser)
+        if(r.status_code != 200):
+            baseUri = "https://www.youtube.com/channel/"
+        
+        return self.parseChannelByUrl(baseUri + idOrUser, idOrUser)
+
+    #
+    # Returns ( Object<Channel>, List<Neighbor>)
+    #
+    def parseChannelByUrl(self, url, idOrUser):
+        print("Walking to", url)
+        data = {}
+
+        r_about = requests.get(url + "/about", headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+        }, cookies={
+            'PREF': 'f1=50000000&f5=30&hl=en-US'
+        })
+
+        r_main = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+        }, cookies={
+            'PREF': 'f1=50000000&f5=30&hl=en-US'
+        })
+        
+        start = time.time()
+
+        aboutPage = BeautifulSoup(r_about.text, 'html.parser')
+
+        print("[TIME] About Page: ", time.time() - start)
+        start = time.time()
+        mainPage = BeautifulSoup(r_main.text, 'html.parser')
+        print("[TIME] Main Page: ",time.time() - start)
+        start = time.time()
+        brain = RedBrain(aboutPage, mainPage)
+        #parse
+        data['medium'] = 'youtube';
+        data['title'] = brain.getTitle()
+        data['email'] = brain.getEmail()
+        data['phone'] = brain.getPhoneNumber()
+        data['description'] = brain.getDescription();
+        data['logo_url'] = brain.getLogoUrl()
+        fvc = brain.getFollowerAndViewCount()
+        data['stats'] = {}
+        try:
+            data['stats']['subscriber_count'] = int(fvc[0][0].replace(",", ""))
+            data['stats']['view_count'] = int(fvc[1][0].replace(",", ""))
+        except Exception:
+            data['stats']['subscriber_count'] = 0
+            data['stats']['view_count'] = 0
+
+        data['country'] = brain.getCountry()
+        data['language'] = brain.getLanguage()
+        data['url'] = url;
+        data['id'] = idOrUser
+
+        print("[TIME] Brain: ",time.time() - start)
+        start = time.time()
+        print("[x] getting relations")
+        dnode = brain.getAllChannelRef(aboutPage)
+        print("[TIME] References: ",time.time() - start)
+        print("[x] Found", len(dnode), "relations")
+        
+        return (data, list(set(dnode)))
+
+class Queue():
+    def __init__(self):
+        self.q = []
+
+    def put(self, item):
+        self.q.push(item)
 
     def get(self, *args, **kwargs):
-        _, _, item = queue.PriorityQueue.get(self, *args, **kwargs)
-        return item
-
-visited = {}
-linkQ  = Racist()
-
-# starting points with racism score
-linkQ.put("UCO5rwjHY-jcX-gmzOCSApOQ", 100)
-linkQ.put("HEARTROCKERChannel", 100)
-linkQ.put("FoodTravelTVChannel", 100)
-linkQ.put("UCQ0-okjX18v85QlCAr1GBwQ", 100)
-linkQ.put("easycooking", 100)
-linkQ.put("VrzoChannel", 100)
-linkQ.put("GGTKcastation", 100)
-linkQ.put("bomberball", 100)
-linkQ.put("UC7rtE7hSTaC8xDf5v_7O1qQ", 100)
-linkQ.put("UC0TnoMtL2J9OsXU4jgvO_ag", 100)
-linkQ.put("UClshsyv7mLwBxLLfSSwLAFQ", 100)
-linkQ.put("llookatgreeeen", 100)
-linkQ.put("faharisara", 100)
-linkQ.put("ninabeautyworld", 100)
-
-# result = []
-while True:
-    q = linkQ.get()
-    try:
-        x = parseChannelByIdOrUser(q, linkQ, visited)
-        print("Remaining in Q", linkQ.qsize())
-        MLAB_API_KEY = "ucQuRaICqjzsxmtTVyuXp3dxzNheiKmy";
-        MLAB_TEMP_COLLECTION = "profilesv5"
-        mongoUri = "https://api.mlab.com/api/1/databases/alphastoka/collections/" + MLAB_TEMP_COLLECTION + "/?apiKey=" + MLAB_API_KEY
-        r=  requests.post(mongoUri, headers={
-            "Content-Type" : "application/json"
-            }, data=json.dumps(x))
-
-        print(r.status_code)
-    except Exception as ex:
-        print(ex)
+        return self.p.pop(0)

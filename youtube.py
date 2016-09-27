@@ -95,8 +95,8 @@ class StokaInstance:
         self.STORAGE[object["id"]] = True
         object["_seed_username"] = self.seed_user
         object["_dna"] = "stoka-yt"
-        object["predicted_age"] = "pending"
-        object["category"] = "pending"
+        object["predicted_age"] = 0
+        object["category"] = {}
 
         confidence = categorize(str(object["description"]), self.categorizer_kwd)
         object["category"] = confidence
@@ -137,17 +137,17 @@ class StokaInstance:
 
         idOrUser = body.decode("utf-8")
         parser = YtParser()
-        (channel, neighbors) = parser.parseChannelByIdOrUser(idOrUser)
+        (channel, neighbors) = parser.parseChannelByIdOrUser(idOrUser, True)
 
         print("[x] Working on ", channel["title"], idOrUser)
         
         for f in neighbors:
             if self.inStorage(f):
                 continue
-            print("[x] Adding to Queue ", f)
-
-            self.pushQ(f)
+            
             self.process(f)
+            print("- ", f)
+            self.pushQ(f)
             
 
     # popping (called once)
@@ -162,7 +162,7 @@ class StokaInstance:
     def get_user(self, id_or_username):
         print("[x] Getting ID", id_or_username)
         parser = YtParser()
-        (channel, neighbors) = parser.parseChannelByIdOrUser(id_or_username)
+        (channel, neighbors) = parser.parseChannelByIdOrUser(id_or_username, False)
 
         return channel
 
@@ -177,9 +177,10 @@ if __name__ == '__main__':
     RABBIT_PWD = os.getenv('RABBIT_PWD', "Nc77WrHuAR58yUPl")
     RABBIT_PORT = os.getenv('RABBIT_PORT', 32774)
     RABBIT_HOST = os.getenv('RABBIT_HOST', 'localhost')
-    SEED_ID = os.getenv('SEED_ID', 'lifestylehattaya70')
-    GROUP_NAME = os.getenv('GROUP_NAME', 'discovery_queue_y3')
+    SEED_ID = os.getenv('SEED_ID', 'NinaBeautyWorld')
+    GROUP_NAME = os.getenv('GROUP_NAME', 'testyt6')
 
+    print("1138K-RMA2")
     print("using configuration", RABBIT_HOST, RABBIT_PWD, RABBIT_USR, int(RABBIT_PORT))
 
     credentials = pika.PlainCredentials(RABBIT_USR, RABBIT_PWD)

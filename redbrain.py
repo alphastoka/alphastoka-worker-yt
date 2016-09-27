@@ -75,7 +75,7 @@ class RedBrain:
         return matches
 
     def getChannelFromVideoRef(self):
-        start = time.time()
+        # start = time.time()
         stx = str(self.soupMain)
         matches = RedBrain.getWatchLinks(stx)
         if len(matches) == 0:
@@ -89,18 +89,21 @@ class RedBrain:
         }, cookies={
             'PREF': 'f1=50000000&f5=30&hl=th-TH'
         })
+
         chanlist = []
+
+        #branded-page-related-channels
+        # r_video_soup = BeautifulSoup(r_video.text, 'html.parser')
+
         #get referecne from rhs of parent's ch video
-        otherWatchLinks = RedBrain.getWatchLinks(r_video.text)
+        otherWatchLinks = list(set(RedBrain.getWatchLinks(r_video.text)))
         #go to each video we are suggested to watch
 
-        print("[TIME] getChannelFromVideoRef: ",time.time() - start)
+        # print("[TIME] getChannelFromVideoRef: ",time.time() - start)
         start = time.time()
-        MAX_GET = 1
-        if len(otherWatchLinks) > 2:
-            MAX_GET = 3
-            
-        for videoLink in otherWatchLinks[:MAX_GET]:
+        
+        print("len(otherWatchLinks)" ,len(otherWatchLinks))
+        for videoLink in otherWatchLinks:
             # print(videoLink)
             #naviate there
             rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={
@@ -123,8 +126,8 @@ class RedBrain:
     # get all neighboring nodes reachable from
     # this channel
     def getAllChannelRef(self, soup):
-        kNNChan = self.getChannelFromVideoRef()
-        stx = str(soup)
+        # kNNChan = self.getChannelFromVideoRef()
+        stx = str( soup.select(".branded-page-related-channels-list"))
         rgx_reflink = r"\"(/user/[^\"]*)\""
         m1 = re.findall(rgx_reflink, stx)
         rgx_reflink = r"\"(/channel/[^\"]*)\""
@@ -141,7 +144,9 @@ class RedBrain:
         for m in mx:
             k = m.split("/")
             M.append(k[2])
-        return M+kNNChan
+        
+        print("M=", M)
+        return M
 
     # get email if avialable
     def getEmail(self):
@@ -169,19 +174,19 @@ class Parser:
     def __init__(self):
         pass
 
-    def parseChannelByIdOrUser(self, idOrUser):
+    def parseChannelByIdOrUser(self, idOrUser, findkNN):
         baseUri = "https://www.youtube.com/user/"
         #determine base url /user or /channel
         r = requests.get(baseUri + idOrUser)
         if(r.status_code != 200):
             baseUri = "https://www.youtube.com/channel/"
         
-        return self.parseChannelByUrl(baseUri + idOrUser, idOrUser)
+        return self.parseChannelByUrl(baseUri + idOrUser, idOrUser, findkNN)
 
     #
     # Returns ( Object<Channel>, List<Neighbor>)
     #
-    def parseChannelByUrl(self, url, idOrUser):
+    def parseChannelByUrl(self, url, idOrUser, findkNN):
         print("Walking to", url)
         data = {}
 
@@ -197,16 +202,12 @@ class Parser:
             'PREF': 'f1=50000000&f5=30&hl=en-US'
         })
         
-        start = time.time()
 
         aboutPage = BeautifulSoup(r_about.text, 'html.parser')
 
-        print("[TIME] About Page: ", time.time() - start)
-        start = time.time()
         mainPage = BeautifulSoup(r_main.text, 'html.parser')
-        print("[TIME] Main Page: ",time.time() - start)
-        start = time.time()
         brain = RedBrain(aboutPage, mainPage)
+        print("TITLE: ", brain.getTitle())
         #parse
         data['medium'] = 'youtube';
         data['title'] = brain.getTitle()
@@ -228,11 +229,11 @@ class Parser:
         data['url'] = url;
         data['id'] = idOrUser
 
-        print("[TIME] Brain: ",time.time() - start)
-        start = time.time()
         print("[x] getting relations")
+        dnode = []
+        if findkNN:
+            pass
         dnode = brain.getAllChannelRef(aboutPage)
-        print("[TIME] References: ",time.time() - start)
         print("[x] Found", len(dnode), "relations")
         
         return (data, list(set(dnode)))

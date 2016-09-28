@@ -74,59 +74,95 @@ class RedBrain:
             return []
         return matches
 
+
     def getChannelFromVideoRef(self):
+        """
+            returns (<List> list of other Channels found, <List> this channel's video descriptions')
+        """
         # start = time.time()
+        # get main tab
         stx = str(self.soupMain)
+        # get watch links from main tab
         matches = RedBrain.getWatchLinks(stx)
         if len(matches) == 0:
             return []
         
-        randomVideoLink = random.choice(matches)
-
-        #go to video of one of parent's ch
-        r_video = requests.get('https://www.youtube.com/' + randomVideoLink, headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
-        }, cookies={
-            'PREF': 'f1=50000000&f5=30&hl=th-TH'
-        })
-
+        randomVideoLinks = random.sample(matches, 5)
         chanlist = []
+        watchDescriptions = []
+        
+        # open random video and get its decsription
+        for videoLinkFromChannel in randomVideoLinks:
+            #go to video of one of parent's ch
+            r_video = requests.get('https://www.youtube.com/' + videoLinkFromChannel, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+            }, cookies={
+                'PREF': 'f1=50000000&f5=30&hl=th-TH'
+            })
+
+            #get description text
+            r_video_soup = BeautifulSoup(r_video.text, 'html.parser')
+            watchTitle = str(r_video_soup.select('.watch-title-container'))
+            watchDescriptions.append({
+                "url": 'https://www.youtube.com/' + videoLinkFromChannel,
+                "title": watchTitle,
+                "description": str(r_video_soup.select('#watch-description'))
+            })
+
+            #try to obtain neighboring channels
+            otherWatchLinks = list(set(RedBrain.getWatchLinks(r_video.text)))
+            for knnWatchLinks in otherWatchLinks:
+                rvideo_newchan = requests.get('https://www.youtube.com' + knnWatchLinks, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+                })
+                rvideo_newchan_soup = BeautifulSoup(rvideo_newchan.text, 'html.parser')
+                # get its channel link
+                chanAnchorElem = rvideo_newchan_soup.select(".yt-user-info a")
+                if len(chanAnchorElem) > 0:
+                    hrefs = chanAnchorElem[0]['href'].split("/")
+                    channelOwner = hrefs[len(hrefs) - 1]
+                    # # add te rchan w/ highest priority
+                    chanlist.append(channelOwner)
+
+
+        # chanlist = []
 
         #branded-page-related-channels
         # r_video_soup = BeautifulSoup(r_video.text, 'html.parser')
+        # watchDescription = str(r_video_soup.select('#watch-description'))
 
-        #get referecne from rhs of parent's ch video
-        otherWatchLinks = list(set(RedBrain.getWatchLinks(r_video.text)))
-        #go to each video we are suggested to watch
+        # #get referecne from rhs of parent's ch video
+        # otherWatchLinks = list(set(RedBrain.getWatchLinks(r_video.text)))
+        # #go to each video we are suggested to watch
 
-        # print("[TIME] getChannelFromVideoRef: ",time.time() - start)
-        start = time.time()
+        # # print("[TIME] getChannelFromVideoRef: ",time.time() - start)
+        # start = time.time()
         
-        print("len(otherWatchLinks)" ,len(otherWatchLinks))
-        for videoLink in otherWatchLinks:
-            # print(videoLink)
-            #naviate there
-            rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
-            })
+        # print("len(otherWatchLinks)" ,len(otherWatchLinks))
+        # for videoLink in otherWatchLinks:
+        #     # print(videoLink)
+        #     #naviate there
+        #     rvideo_newchan = requests.get('https://www.youtube.com' + videoLink, headers={
+        #         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36',
+        #     })
 
-            rvideo_newchan_soup = BeautifulSoup(rvideo_newchan.text, 'html.parser')
-            # #grab the fucking channel
-            chanAnchorElem = rvideo_newchan_soup.select(".yt-user-info a")
-            if len(chanAnchorElem) > 0:
-                hrefs = chanAnchorElem[0]['href'].split("/")
-                channelOwner = hrefs[len(hrefs) - 1]
-                # # add te rchan w/ highest priority
-                chanlist.append(channelOwner)
+        #     rvideo_newchan_soup = BeautifulSoup(rvideo_newchan.text, 'html.parser')
+        #     # #grab the fucking channel
+        #     chanAnchorElem = rvideo_newchan_soup.select(".yt-user-info a")
+        #     if len(chanAnchorElem) > 0:
+        #         hrefs = chanAnchorElem[0]['href'].split("/")
+        #         channelOwner = hrefs[len(hrefs) - 1]
+        #         # # add te rchan w/ highest priority
+        #         chanlist.append(channelOwner)
         
-        print("[TIME] getChannelFromVideoRef (otherWatchLinks): ",time.time() - start)
-        return chanlist
+        # print("[TIME] getChannelFromVideoRef (otherWatchLinks): ",time.time() - start)
+        return (chanlist, watchDescriptions)
 
 
     # get all neighboring nodes reachable from
     # this channel
     def getAllChannelRef(self, soup):
-        # kNNChan = self.getChannelFromVideoRef()
+        (kNNChan, desc) = self.getChannelFromVideoRef()
         stx = str( soup.select(".branded-page-related-channels-list"))
         rgx_reflink = r"\"(/user/[^\"]*)\""
         m1 = re.findall(rgx_reflink, stx)
@@ -146,7 +182,7 @@ class RedBrain:
             M.append(k[2])
         
         print("M=", M)
-        return M
+        return (M + kNNChan, desc)
 
     # get email if avialable
     def getEmail(self):
@@ -233,7 +269,9 @@ class Parser:
         dnode = []
         if findkNN:
             pass
-        dnode = brain.getAllChannelRef(aboutPage)
+        (dnode, desc) = brain.getAllChannelRef(aboutPage)
+
+        data['video_descriptions'] = desc;
         print("[x] Found", len(dnode), "relations")
         
         return (data, list(set(dnode)))
